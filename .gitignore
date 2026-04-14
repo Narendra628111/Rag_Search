@@ -1,0 +1,54 @@
+# 🔐 Environment variables
+.env
+.env.*
+
+# 🐍 Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 📦 Virtual environment
+.venv/
+venv/
+env/
+
+# 🧠 VS Code / IDE
+.vscode/
+.idea/
+
+# 📁 OS files
+.DS_Store
+Thumbs.db
+
+# 📊 Logs
+*.log
+
+# 🧪 Test / coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# 📦 Build / dist
+build/
+dist/
+*.egg-info/
+
+# 🔄 Jupyter
+.ipynb_checkpoints/
+
+# 📡 Qdrant local storage (if used)
+qdrant_storage/
+
+# 🧾 Temporary files
+*.tmp
+*.bak
+
+# 🔥 Ingestion outputs (optional)
+*.json
+*.csv
+
+# 🚀 Node (if frontend later)
+node_modules/
+
+
+data/repos/
