@@ -1,16 +1,7 @@
 from fastapi import FastAPI
+from app.api import routes_rag, routes_ingest
 
-from app.api.routes_search import router as search_router
-from app.api.routes_rag import router as rag_router
+app = FastAPI()
 
-app = FastAPI(
-    title="RAG Code Search API",
-    version="1.0.0"
-)
-
-@app.get("/")
-def root():
-    return {"message": "API is running 🚀"}
-
-app.include_router(search_router, prefix="/search", tags=["Search"])
-app.include_router(rag_router, prefix="/rag", tags=["RAG"])
+app.include_router(routes_ingest.router, prefix="/api")
+app.include_router(routes_rag.router, prefix="/api")

@@ -7,10 +7,18 @@ router = APIRouter()
 
 class QueryRequest(BaseModel):
     query: str
+    repo_name: str   # 🔥 NEW
 
 @router.post("/ask")
 async def ask_question(request: QueryRequest):
-    results = search_similar_code(request.query)
+
+    results = search_similar_code(request.query, request.repo_name)
+
+    for r in results:
+        print("FILE:", r.payload["file_path"])
+        print("CONTENT:", r.payload["content"][:200])
+        print("SCORE:", r.score)
+        print("="*50)
 
     context = "\n\n".join([
         r.payload["content"][:300] for r in results
