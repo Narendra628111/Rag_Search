@@ -1,6 +1,10 @@
 # 🔐 Environment variables
 .env
-.env.*
+.env.local
+.env.development
+.env.production
+.env.staging
+
 
 # 🐍 Python cache
 __pycache__/
