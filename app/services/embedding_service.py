@@ -1,15 +1,35 @@
-from google import genai
+# app/services/embedding_service.py
+#
+# Single source of truth for all embedding in this project.
+#
+# Model      : all-MiniLM-L6-v2  (sentence-transformers, runs locally)
+# Dimensions : 384
+# Cost       : free — no API key, no network call, no internet after first download
+
+from typing import List
+from sentence_transformers import SentenceTransformer
 from app.core.config import settings
 
-client = genai.Client(api_key=settings.GEMINI_API_KEY)
+# Load once at import time — shared across all calls in the process
+_model = SentenceTransformer(settings.EMBEDDING_MODEL)
 
-def get_embedding(text: str):
-    # ✅ Fix: avoid empty input
+
+def get_embedding(text: str) -> List[float]:
+    """
+    Embed a single string into a 384-dim vector.
+    Used by vector_service for BOTH ingestion and search.
+    """
     if not text or not text.strip():
-        return None
+        raise ValueError("get_embedding() received empty text.")
+    return _model.encode(text).tolist()
 
-    response = client.models.embed_content(
-        model="gemini-embedding-001",
-        contents=text
-    )
-    return response.embeddings[0].values
+
+def get_embeddings_batch(texts: List[str]) -> List[List[float]]:
+    """
+    Embed multiple strings in one batched call — much faster than
+    calling get_embedding() in a loop during ingest.
+    """
+    texts = [t for t in texts if t and t.strip()]
+    if not texts:
+        return []
+    return _model.encode(texts, batch_size=64, show_progress_bar=True).tolist()
