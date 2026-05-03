@@ -37,35 +37,11 @@ def create_collection() -> None:
         )
 
 
-def store_embedding(content: str, file_path: str, repo_name: str) -> None:
-    """
-    Embed a single chunk and upsert it into Qdrant.
-    Uses get_embedding() from embedding_service — same model as search.
-    """
-    vector = get_embedding(content)
-
-    qdrant_client.upsert(
-        collection_name=COLLECTION_NAME,
-        points=[
-            PointStruct(
-                id=str(uuid.uuid4()),
-                vector=vector,
-                payload={
-                    "content": content,
-                    "file_path": file_path,
-                    "repo": repo_name,
-                },
-            )
-        ],
-    )
-
-
 def ingest_codebase(folder_path: str, repo_name: str) -> int:
     create_collection()
 
     all_chunks = []   # collect everything first
 
-    # vector_service.py — inside ingest_codebase, replace the skip logic with:
 
     SKIP_EXTENSIONS = {".min.js", ".min.css", ".map", ".lock"}
     SKIP_DIRS = {".git", "node_modules", "venv", "__pycache__", "dist", "build"}

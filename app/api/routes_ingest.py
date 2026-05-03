@@ -32,9 +32,6 @@ def _save_status(status: dict):
     STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATUS_FILE.write_text(json.dumps(status, indent=2))
 
-class RepoRequest(BaseModel):
-    repo_url: str
-
 ingest_status = _load_status()  # load from disk on startup
 
 def _run_ingest(repo_url: str):
