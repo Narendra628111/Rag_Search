@@ -1,10 +1,4 @@
-# app/services/embedding_service.py
-#
-# Single source of truth for all embedding in this project.
-#
-# Model      : all-MiniLM-L6-v2  (sentence-transformers, runs locally)
-# Dimensions : 384
-# Cost       : free — no API key, no network call, no internet after first download
+
 
 from typing import List
 from sentence_transformers import SentenceTransformer

@@ -1,7 +1,3 @@
-# app/services/llm_service.py
-#
-# Uses the new `google.genai` package (replaces deprecated `google.generativeai`).
-# Model name is read from .env via settings.GENERATION_MODEL.
 
 from google import genai
 from app.core.config import settings

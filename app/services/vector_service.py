@@ -1,9 +1,3 @@
-# app/services/vector_service.py
-#
-# Responsibilities: Qdrant collection management, storing vectors, searching.
-#
-# Embedding is intentionally NOT done here.
-# Import get_embedding from embedding_service — that is the single source of truth.
 
 import os
 import uuid
