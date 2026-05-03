@@ -2,7 +2,7 @@
 from typing import List
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
-from app.services.vector_service import get_embedding   # single source of truth
+from app.services.embedding_service import get_embedding   # single source of truth
 
 def rerank(query: str, results: list, top_k: int = 5) -> list:
     """

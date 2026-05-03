@@ -14,6 +14,7 @@ from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, Fi
 
 from app.core.config import settings
 from app.services.embedding_service import get_embedding  # ← single source of truth
+from app.services.chunker_service import chunk_file
 
 # Qdrant client — reads URL from .env via settings
 qdrant_client = QdrantClient(url=settings.QDRANT_URL)
@@ -70,11 +71,28 @@ def ingest_codebase(folder_path: str, repo_name: str) -> int:
 
     all_chunks = []   # collect everything first
 
+    # vector_service.py — inside ingest_codebase, replace the skip logic with:
+
+    SKIP_EXTENSIONS = {".min.js", ".min.css", ".map", ".lock"}
+    SKIP_DIRS = {".git", "node_modules", "venv", "__pycache__", "dist", "build"}
+    SKIP_PATTERNS = ["vendor", "jquery", "bootstrap", "lodash", "moment"]
+
     for root, dirs, files in os.walk(folder_path):
-        dirs[:] = [d for d in dirs if d not in {".git", "node_modules", "venv", "__pycache__"}]
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
 
         for file in files:
+            file_path = os.path.join(root, file)
+
+             # Skip minified/vendor files by name pattern
+            if any(p in file.lower() for p in SKIP_PATTERNS):
+                continue
+
+            # Skip by extension
             if not file.endswith((".py", ".js", ".ts", ".md", ".txt", ".json", ".sql")):
+                continue
+
+            # Skip minified files (e.g. file.min.js)
+            if ".min." in file:
                 continue
 
             file_path = os.path.join(root, file)
@@ -84,11 +102,12 @@ def ingest_codebase(folder_path: str, repo_name: str) -> int:
             except Exception:
                 continue
 
-            chunks = [content[i:i + 300] for i in range(0, len(content), 300)]
-            for chunk in chunks:
+            raw_chunks = chunk_file(file_path, content)
+            for chunk_dict in raw_chunks:
+                chunk = chunk_dict["content"]
                 if chunk.strip():
                     all_chunks.append({"content": chunk, "file_path": file_path})
-
+            
     # Embed all chunks in one batched call
     if all_chunks:
         from app.services.embedding_service import get_embeddings_batch

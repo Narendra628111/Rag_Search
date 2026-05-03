@@ -23,3 +23,15 @@ async def ingest_repo(request: RepoRequest, background_tasks: BackgroundTasks):
         "repo": repo_name,
         "status": "processing"
     }
+
+ingest_status = {}  # in-memory store
+
+def _run_ingest(repo_url: str):
+    repo_path, repo_name = clone_repo(repo_url)
+    ingest_status[repo_name] = "processing"
+    file_count = ingest_codebase(repo_path, repo_name)
+    ingest_status[repo_name] = f"done — {file_count} files"
+
+@router.get("/ingest/status/{repo_name}")
+async def get_status(repo_name: str):
+    return {"repo": repo_name, "status": ingest_status.get(repo_name, "not started")}
