@@ -1,32 +1,40 @@
 # RAG Search — Codebase Q&A
 
-> Ask natural-language questions about any GitHub repository and get precise, context-aware answers powered by local embeddings and Gemini.
+> Ask natural-language questions about any GitHub repository and get precise, context-aware answers — powered by local embeddings and Google Gemini.
 
 ---
 
 ## How it works
 
 ```
-GitHub Repo
-    │
-    ▼
-Clone  ──▶  tree-sitter chunking  ──▶  SentenceTransformer embeddings  ──▶  Qdrant (vector store)
-                                                                                      │
-Query ──▶  embed query ──────────────────────────────────────────────▶  vector search + cosine rerank
-                                                                                      │
-                                                                                      ▼
-                                                                              Gemini  ──▶  Answer
+GitHub Repo URL
+      │
+      ▼
+ git clone ──► tree-sitter AST chunking ──► all-MiniLM-L6-v2 (local) ──► Qdrant (vector store)
+                                                                                    │
+ Your Question ──► embed query ─────────────────────────────────► vector search (top 20)
+                                                                                    │
+                                                                         cosine rerank (top 5)
+                                                                                    │
+                                                                                    ▼
+                                                                    Gemini (gemini-3-flash-preview)
+                                                                                    │
+                                                                                    ▼
+                                                                               Answer + Sources
 ```
 
-1. **Ingest** — clones the repo, parses each file with tree-sitter into function-level chunks, embeds them locally with `all-MiniLM-L6-v2`, and stores vectors in Qdrant
-2. **Query** — embeds the question, retrieves top-10 similar chunks from Qdrant, reranks by cosine similarity, and sends the top-5 to Gemini for answer generation
+**Two flows:**
+
+**Ingest** — You provide a GitHub URL. The server clones the repo into `data/repos/`, walks every file, parses Python/JS/TS files with tree-sitter at the function and class level (all other file types use a sliding window fallback), embeds every chunk locally using `all-MiniLM-L6-v2`, and upserts them into Qdrant in batches of 100. Runs entirely in the background — the API returns immediately.
+
+**Query** — You provide a question and a repo name. The server embeds your question with the same local model, searches Qdrant for the top 20 most similar chunks filtered to that repo, reranks them by exact cosine similarity to get the top 5, builds a context string, and sends it to Gemini to generate the final answer.
 
 ---
 
 ## Prerequisites
 
 - Python 3.11+
-- Docker (for Qdrant)
+- Qdrant running locally
 - A Gemini API key → [Get one here](https://aistudio.google.com/app/apikey)
 
 ---
@@ -35,15 +43,24 @@ Query ──▶  embed query ─────────────────
 
 ### 1. Start Qdrant
 
+**Windows — using qdrant.exe:**
 ```bash
-docker run -p 6333:6333 qdrant/qdrant
+# Download qdrant.exe from https://github.com/qdrant/qdrant/releases
+# Open Command Prompt in the folder where you saved it and run:
+.\qdrant.exe
 ```
 
-### 2. Install dependencies
+Qdrant will start at `http://localhost:6333`. You can confirm it's running by opening that URL in your browser — you should see the Qdrant dashboard.
+
+### 2. Clone this repo and install dependencies
 
 ```bash
+git clone https://github.com/Narendra628111/Rag_Search.git
+cd rag-search
 pip install -r requirements.txt
 ```
+
+> The first run will download `all-MiniLM-L6-v2` (~90MB) automatically. After that it is cached locally — no internet needed for embeddings.
 
 ### 3. Configure environment
 
@@ -51,51 +68,38 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Then open `.env` and fill in your values:
+Open `.env` and fill in your values:
 
 ```env
 GEMINI_API_KEY=your-gemini-api-key-here
-GENERATION_MODEL=gemini-2.0-flash
+GENERATION_MODEL=gemini-3-flash-preview
 EMBEDDING_MODEL=all-MiniLM-L6-v2
 QDRANT_URL=http://localhost:6333
 COLLECTION_NAME=codebase
 ```
 
-> **Note:** The embedding model runs locally — no API key needed, no cost, no internet after the first download.
-> Do **not** change `EMBEDDING_MODEL` after ingesting a repo without also updating `VECTOR_SIZE` in `vector_service.py` and re-ingesting.
+> **Important:** Do NOT change `EMBEDDING_MODEL` after ingesting repos. The query embedding must use the same model as ingestion — if they differ, similarity search will return garbage results. If you ever change the model, update `VECTOR_SIZE` in `vector_service.py` to match and re-ingest all repos from scratch.
 
 ### 4. Start the server
 
 ```bash
+# using uvicorn directly
 uvicorn app.main:app --reload
 ```
 
-Server runs at `http://localhost:8000`. Interactive API docs at `http://localhost:8000/docs`.
+Server starts at `http://localhost:8000`
+Interactive API docs at `http://localhost:8000/docs`
 
 ---
 
-## API
+## API Reference
 
-### Health check
+### POST `/api/ingest` — Ingest a repository
 
-```http
-GET /health
-```
+Clones and indexes the repository in the background. Returns immediately without waiting for ingestion to complete.
 
+**Request:**
 ```json
-{ "status": "ok" }
-```
-
----
-
-### Ingest a repository
-
-Clones and indexes the repo in the background. Returns immediately.
-
-```http
-POST /api/ingest
-Content-Type: application/json
-
 {
   "repo_url": "https://github.com/user/repo"
 }
@@ -110,32 +114,46 @@ Content-Type: application/json
 }
 ```
 
+**Validation:**
+- `repo_url` must be a valid GitHub URL (`github.com` must be present)
+- Empty URLs return a `422` error
+
 ---
 
-### Check ingest status
+### GET `/api/ingest/status/{repo_name}` — Check ingest status
 
-```http
-GET /api/ingest/status/{repo_name}
+Poll this after calling `/api/ingest` to know when the repo is ready to query.
+
+**Example:**
+```
+GET /api/ingest/status/fastapi
 ```
 
 **Response:**
 ```json
 {
-  "repo": "repo",
+  "repo": "fastapi",
   "status": "done — 42 files"
 }
 ```
 
-Possible status values: `not started` · `processing` · `done — N files` · `error: <message>`
+**Possible status values:**
+
+| Status | Meaning |
+|---|---|
+| `not started` | Repo has never been ingested |
+| `processing` | Currently cloning and embedding |
+| `done — N files` | Ingestion complete, N files indexed |
+| `error: <message>` | Ingestion failed — message explains why |
+
+> Status is persisted to `data/ingest_status.json` — survives server restarts.
 
 ---
 
-### Ask a question
+### POST `/api/ask` — Ask a question about a repo
 
-```http
-POST /api/ask
-Content-Type: application/json
-
+**Request:**
+```json
 {
   "query": "How does authentication work?",
   "repo_name": "repo"
@@ -145,88 +163,118 @@ Content-Type: application/json
 **Response:**
 ```json
 {
-  "answer": "Authentication is handled by the `verify_token()` function in ...",
+  "question": "How does authentication work?",
+  "answer": "Authentication is handled by the verify_token() function in app/auth/token.py ...",
   "sources": [
-    {
-      "file": "app/auth/token.py",
-      "content": "def verify_token(token: str) -> bool: ..."
-    }
+    { "file": "data/repos/repo/app/auth/token.py", "score": 0.9123 },
+    { "file": "data/repos/repo/app/middleware.py", "score": 0.8741 }
   ]
+}
+```
+
+**Validation:**
+- `query` cannot be empty and must be under 1000 characters
+- `repo_name` cannot be empty
+- Invalid input returns a `422` error
+
+**If nothing is found:**
+```json
+{
+  "question": "...",
+  "answer": "Not found in codebase.",
+  "sources": []
 }
 ```
 
 ---
 
-## Project structure
-
-```
-app/
-├── main.py                    ← FastAPI app, router registration
-├── core/
-│   └── config.py              ← Pydantic settings from .env
-└── api/
-│   ├── routes_ingest.py       ← POST /ingest, GET /ingest/status
-│   └── routes_rag.py          ← POST /ask
-└── services/
-    ├── chunker_service.py     ← tree-sitter function extraction + sliding window fallback
-    ├── embedding_service.py   ← SentenceTransformer (single source of truth for embeddings)
-    ├── github_service.py      ← git clone
-    ├── llm_service.py         ← Gemini answer generation
-    ├── rerank_service.py      ← cosine reranking top-10 → top-5
-    └── vector_service.py      ← Qdrant upsert + similarity search
-```
-
----
-
-## Supported languages
-
-Parsed at the function/class level via tree-sitter:
-
-| Language   | Extensions      |
-|------------|-----------------|
-| Python     | `.py`           |
-| JavaScript | `.js`           |
-| TypeScript | `.ts`           |
-
-All other file types fall back to a sliding-window chunker (500 chars, 50 char overlap).
-
----
-
-## Example usage
+## Example — Full walkthrough using curl
 
 ```bash
-# 1. Ingest a repo
+# Step 1 — Ingest a repo (runs in background)
 curl -X POST http://localhost:8000/api/ingest \
   -H "Content-Type: application/json" \
-  -d '{"repo_url": "https://github.com/tiangolo/fastapi"}'
+  -d "{\"repo_url\": \"https://github.com/tiangolo/fastapi\"}"
 
-# 2. Poll until done
+# Step 2 — Poll until status is "done"
 curl http://localhost:8000/api/ingest/status/fastapi
 
-# 3. Ask a question
+# Step 3 — Ask a question
 curl -X POST http://localhost:8000/api/ask \
   -H "Content-Type: application/json" \
-  -d '{"query": "How does dependency injection work?", "repo_name": "fastapi"}'
+  -d "{\"query\": \"How does dependency injection work?\", \"repo_name\": \"fastapi\"}"
 ```
 
 ---
 
-## Tech stack
+## Project Structure
 
-| Component        | Technology                        |
-|------------------|-----------------------------------|
-| API framework    | FastAPI                           |
-| Embeddings       | `all-MiniLM-L6-v2` (local)       |
-| Vector store     | Qdrant                            |
-| Code parsing     | tree-sitter                       |
-| LLM              | Google Gemini                     |
-| Reranking        | scikit-learn cosine similarity    |
-| Repo cloning     | GitPython                         |
+```
+rag-search/
+│
+├── main.py                        ← Entrypoint — runs uvicorn programmatically
+│
+├── app/
+│   ├── main.py                    ← FastAPI app, router registration
+│   │
+│   ├── core/
+│   │   └── config.py              ← Pydantic settings — reads all values from .env
+│   │
+│   ├── api/
+│   │   ├── routes_ingest.py       ← POST /api/ingest, GET /api/ingest/status/{repo}
+│   │   └── routes_rag.py          ← POST /api/ask
+│   │
+│   └── services/
+│       ├── embedding_service.py   ← Loads all-MiniLM-L6-v2 once, exposes get_embedding()
+│       │                            and get_embeddings_batch() — single source of truth
+│       ├── chunker_service.py     ← tree-sitter AST chunking for .py/.js/.ts,
+│       │                            sliding window fallback for everything else
+│       ├── vector_service.py      ← Qdrant collection management, batched upsert,
+│       │                            cosine similarity search filtered by repo
+│       ├── rerank_service.py      ← Batched cosine reranking: top-20 → top-5
+│       ├── llm_service.py         ← Gemini answer generation with structured prompt
+│       └── github_service.py      ← git clone into data/repos/, skips if already exists
+│
+├── data/                          ← Auto-created at runtime
+│   ├── repos/                     ← Cloned repositories
+│   └── ingest_status.json         ← Persisted ingest status (survives restarts)
+│
+├── .env                           ← Your secrets (not committed)
+├── .env.example                   ← Template — copy this to .env
+├── requirements.txt
+└── .gitignore
+```
 
 ---
 
-## Known limitations
+## Supported File Types
 
-- `ingest_status` is stored in memory — restarting the server resets status (repos already in Qdrant are still searchable)
-- Only GitHub URLs are supported for ingestion
-- Large repos (1000+ files) may take several minutes to ingest on first run
+| Type | Extensions | Chunking strategy |
+|---|---|---|
+| Python | `.py` | tree-sitter — function + class level |
+| JavaScript | `.js` | tree-sitter — function + class level |
+| TypeScript | `.ts` | tree-sitter — function + class level |
+| Markdown, Text, JSON, SQL | `.md` `.txt` `.json` `.sql` | Sliding window (500 chars, 50 overlap) |
+
+Files matching these patterns are skipped entirely: `node_modules/`, `venv/`, `__pycache__/`, `dist/`, `build/`, `.git/`, `*.min.js`, `*.min.css`, `vendor`, `jquery`, `bootstrap`, `lodash`, `moment`.
+
+---
+
+## Tech Stack
+
+| Component | Technology | Why |
+|---|---|---|
+| API framework | FastAPI | Async, automatic docs, Pydantic validation |
+| Embeddings | `all-MiniLM-L6-v2` via SentenceTransformers | Runs locally — no API cost, no latency |
+| Vector database | Qdrant | Native cosine similarity, metadata filtering by repo |
+| Code parsing | tree-sitter | AST-level chunking — complete functions, not arbitrary slices |
+| LLM | Google Gemini (`gemini-3-flash-preview`) | Answer generation from retrieved context |
+| Reranking | scikit-learn cosine similarity | Two-stage retrieval: fast ANN search → exact rerank |
+| Repo cloning | GitPython | Pure Python git clone |
+
+---
+
+## Known Limitations
+
+- Only public GitHub repositories are supported
+- Large repos (1000+ files) can take several minutes to ingest on first run
